@@ -1,5 +1,22 @@
+# Virtual Environment
 .venv/
-__pycache__/
-data/
+venv/
+
+# Environment variables
+.env
 *.env
+
+# IDE
+.vscode/
+.idea/
+
+# Data files
+/data/
+!/data/reports/
+!/data/rag_db/
+
+# Logs
 *.log
+
+# System
+.DS_Store
