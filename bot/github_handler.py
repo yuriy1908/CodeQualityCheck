@@ -41,7 +41,6 @@ def analyze_repo(repo_path, analyzer):
                     break
             except:
                 continue
-    # Остальной код без изменений
     
     report_content = analyzer.generate_report(valid_files[:MAX_FILES])
     
