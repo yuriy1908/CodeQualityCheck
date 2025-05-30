@@ -1,5 +1,5 @@
 python-telegram-bot==20.3
-transformers==4.41.2
+transformers==4.44.0
 torch==2.3.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 langchain-community==0.2.1
 faiss-cpu==1.7.4
@@ -11,3 +11,4 @@ bitsandbytes==0.43.0
 huggingface-hub==0.23.0
 chardet==5.2.0
 python-slugify==8.0.4
+faiss-cpu
