@@ -104,11 +104,12 @@ Provide concise analysis covering:
             result = self.generator(
                 prompt,
                 max_new_tokens=300,
-                temperature=0.7,
+                temperature=0.3,  # Понижаем "креативность"
                 top_p=0.9,
                 do_sample=True,
                 num_return_sequences=1,
-                pad_token_id=self.tokenizer.eos_token_id
+                pad_token_id=self.tokenizer.eos_token_id,
+                stop_sequence="###"  # Явное стоп-слово
             )
             
             # Извлекаем сгенерированный текст
@@ -153,19 +154,15 @@ Provide concise analysis covering:
             return text  # Возвращаем оригинал в случае ошибки
 
     def _clean_analysis(self, analysis: str) -> str:
-        """Очистка анализа от лишних частей"""
-        # Удаляем начальный промпт, если он остался
-        markers = [
-            "Analyze this code from",
-            "Provide concise analysis covering:",
-            "1. Critical errors"
-        ]
-        
-        for marker in markers:
-            idx = analysis.find(marker)
+        # Удаляем всё до последнего вхождения "ОТВЕТ" или "ANSWER"
+        for marker in ["### ОТВЕТ", "### ANSWER", "Ответ:", "Analysis:"]:
+            idx = analysis.rfind(marker)  # Ищем последнее вхождение
             if idx != -1:
-                analysis = analysis[idx + len(marker):].lstrip(": \n")
+                analysis = analysis[idx + len(marker):]
         
+        # Дополнительная очистка
+        analysis = analysis.split("###")[0]  # Удаляем всё после разделителя
+        analysis = analysis.split("```")[0]  # Удаляем Markdown-блоки
         return analysis.strip()
 
     def generate_report(self, file_paths: list) -> str:
