@@ -116,6 +116,13 @@ Provide concise analysis covering:
             response = result[0]['generated_text']
             
             # Удаляем промпт из ответа
+            # Удаляем остатки промпта
+            prompt_keywords = ["Analyze this code", "Анализируй код"]
+            for keyword in prompt_keywords:
+                if keyword in response:
+                    response = response.split(keyword)[0]
+
+            response = response.strip()
             return response.replace(prompt, "").strip()
             
         except Exception as e:
