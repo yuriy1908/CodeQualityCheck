@@ -64,7 +64,7 @@ class CodeAnalyzer:
             if self._should_skip(file_path):
                 return "ℹ️ File skipped (binary/system)"
                 
-            code = self._read_file_content(file_path)
+            code = self._read_file_content(file_path)  # Восстановленный метод
             if not code:
                 return "⚠️ Failed to read file"
                 
@@ -75,105 +75,88 @@ class CodeAnalyzer:
             return f"⚠️ Analysis error: {str(e)}"
 
     def _should_skip(self, file_path):
+        # Расширенный список пропускаемых расширений
+        skip_exts = {
+            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.zip', '.rar',
+            '.exe', '.dll', '.so', '.bin', '.pdf', '.ttf', '.woff', '.woff2',
+            '.eot', '.otf', '.mp3', '.wav', '.mp4', '.avi', '.mov', '.doc',
+            '.docx', '.xls', '.xlsx', '.pyc', '.gitignore', '.md', '.ini', '.txt'
+        }
+        
         # Пропускаем .git файлы и бинарные файлы
-        return '/.git/' in file_path.replace('\\', '/')
+        if '/.git/' in file_path.replace('\\', '/'):
+            return True
+            
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext in skip_exts:
+            return True
+            
+        return False
 
+    # ВОССТАНОВЛЕННЫЙ МЕТОД
     def _read_file_content(self, file_path):
         try:
             with open(file_path, 'rb') as f:
                 raw = f.read()
                 encoding = detect(raw)['encoding'] or 'utf-8'
                 return raw.decode(encoding, errors='replace')
-        except:
+        except Exception as e:
+            self.logger.error(f"Error reading file {file_path}: {str(e)}")
             return None
 
     def _fast_generate_analysis(self, file_path, code):
         """Быстрая генерация анализа с использованием конвейера"""
-        prompt = f"""Analyze this code from {os.path.basename(file_path)}:
-{code}
+        max_tokens = 3000
+        encoded = self.tokenizer.encode(code)
+        if len(encoded) > max_tokens:
+            code = self.tokenizer.decode(
+                encoded[:max_tokens],
+                skip_special_tokens=True
+            ) + "\n\n... [код усечен из-за длины]"
+        
+        # Улучшенный промпт с жёстким форматом
+        prompt = f"""Проанализируй код из файла {os.path.basename(file_path)} и предоставь отчёт СТРОГО в формате:
 
-Provide concise analysis covering:
-1. Critical errors
-2. Security issues
-3. Style violations
-4. Optimization tips
-5. Overall quality"""
+[название файла]
+(тип проблемы)
+[строчка: точная строка кода с проблемой]
+[исправление: исправленная строка кода]
+
+Если проблем несколько, перечисли их последовательно. Если проблем нет, напиши "Проблем не обнаружено".
+
+Пример:
+[config.py]
+(проблема безопасности)
+[строчка: SECRET_KEY = 'password123']
+[исправление: SECRET_KEY = os.environ.get('SECRET_KEY')]
+
+Код для анализа:
+{code}"""
 
         try:
-            # Генерация ответа с ограничением длины
             result = self.generator(
                 prompt,
-                max_new_tokens=300,
-                temperature=0.3,  # Понижаем "креативность"
-                top_p=0.9,
-                do_sample=True,
-                num_return_sequences=1,
-                pad_token_id=self.tokenizer.eos_token_id,
-                stop_sequence="###"  # Явное стоп-слово
-            )
-            
-            # Извлекаем сгенерированный текст
-            response = result[0]['generated_text']
-            
-            # Удаляем промпт из ответа
-            # Удаляем остатки промпта
-            prompt_keywords = ["Analyze this code", "Анализируй код"]
-            for keyword in prompt_keywords:
-                if keyword in response:
-                    response = response.split(keyword)[0]
-
-            response = response.strip()
-            return response.replace(prompt, "").strip()
-            
-        except Exception as e:
-            self.logger.error(f"Generation failed: {str(e)}")
-            return f"⚠️ Generation error: {str(e)}"
-    
-    def _translate_to_russian(self, text: str) -> str:
-        """Перевод текста на русский с помощью конвейера"""
-        if not text.strip() or len(text) < 50:
-            return text
-            
-        try:
-            # Промпт для перевода с сохранением форматирования
-            prompt = f"""Переведи следующий технический анализ на русский язык, сохраняя Markdown форматирование и технические термины:
-
-{text}
-
-Перевод:"""
-            
-            # Генерация перевода
-            result = self.generator(
-                prompt,
-                max_new_tokens=len(text) + 100,
-                temperature=0.3,
-                top_p=0.95,
+                max_new_tokens=600,  # Увеличено для сложных файлов
+                temperature=1,     # Понижена "креативность"
+                top_p=0.85,
                 do_sample=True,
                 num_return_sequences=1,
                 pad_token_id=self.tokenizer.eos_token_id
             )
             
-            # Извлекаем перевод
-            translation = result[0]['generated_text'].replace(prompt, "").strip()
-            return translation
+            response = result[0]['generated_text']
+            response = response.replace(prompt, "", 1).strip()
+            
+            # Удаление всех технических комментариев
+            response = re.sub(r"### (Ответ|Response|Ask|Question):.*", "", response, flags=re.IGNORECASE)
+            return response
+            
         except Exception as e:
-            self.logger.error(f"Translation failed: {str(e)}")
-            return text  # Возвращаем оригинал в случае ошибки
-
-    def _clean_analysis(self, analysis: str) -> str:
-        # Удаляем всё до последнего вхождения "ОТВЕТ" или "ANSWER"
-        for marker in ["### ОТВЕТ", "### ANSWER", "Ответ:", "Analysis:"]:
-            idx = analysis.rfind(marker)  # Ищем последнее вхождение
-            if idx != -1:
-                analysis = analysis[idx + len(marker):]
-        
-        # Дополнительная очистка
-        analysis = analysis.split("###")[0]  # Удаляем всё после разделителя
-        analysis = analysis.split("```")[0]  # Удаляем Markdown-блоки
-        return analysis.strip()
+            self.logger.error(f"Generation failed: {str(e)}")
+            return f"⚠️ Ошибка генерации: {str(e)}"
 
     def generate_report(self, file_paths: list) -> str:
-        """Генерация финального отчета на русском"""
+        """Генерация финального отчета"""
         final_report = "# Отчёт о качестве кода\n\n"
         valid_files = 0
         
@@ -182,24 +165,18 @@ Provide concise analysis covering:
                 clean_path = os.path.normpath(path).replace("\\", "/")
                 analysis = self.analyze_file(path)
                 
-                # Для информационных сообщений просто добавляем в отчет
+                if not analysis.strip():
+                    analysis = "🤷 Анализ не дал результатов. Возможно, файл слишком сложен для автоматического анализа."
+                
                 if analysis.startswith("ℹ️") or analysis.startswith("⚠️"):
                     final_report += f"## Файл: `{clean_path}`\n{analysis}\n\n"
                     valid_files += 1
                     continue
                 
-                try:
-                    # Очищаем анализ
-                    clean_analysis = self._clean_analysis(analysis)
+                # Прямой вывод анализа без дополнительной обработки
+                final_report += f"## Файл: `{clean_path}`\n{analysis}\n\n"
+                valid_files += 1
                     
-                    # Переводим на русский
-                    ru_analysis = self._translate_to_russian(clean_analysis)
-                    
-                    final_report += f"## Файл: `{clean_path}`\n{ru_analysis}\n\n"
-                    valid_files += 1
-                except Exception as e:
-                    final_report += f"## Файл: `{clean_path}`\n⚠️ Ошибка обработки: {str(e)}\n\n"
-                
         if valid_files == 0:
             final_report += "⚠️ Нет файлов для анализа\n"
             final_report += "Возможные причины:\n"
