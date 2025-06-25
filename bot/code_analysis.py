@@ -117,32 +117,25 @@ class CodeAnalyzer:
                 skip_special_tokens=True
             ) + "\n\n... [код усечен из-за длины]"
         
-        # Пример правильного вывода (few-shot learning)
-        example = (
-            "[example.py]\n"
-            "(безопасность)\n"
-            "[строчка: password = '12345']\n"
-            "[исправление: password = getpass.getpass()]\n\n"
-        )
+        filename = os.path.basename(file_path)
         
-        # Формируем текстовый промпт
+        # Упрощенный промпт с минимальными инструкциями
         prompt = (
-            "Ты - анализатор кода. Найди проблемы и выведи ТОЛЬКО в формате:\n"
-            "1. [название файла]\n"
-            "2. (тип проблемы)\n"
-            "3. [строчка: проблемная строка]\n"
-            "4. [исправление: исправленная строка]\n"
-            "Пример:\n" + example +
-            "Если проблем нет - ТОЛЬКО 'Проблем не обнаружено'\n\n"
-            f"Файл: {os.path.basename(file_path)}\nКод:\n{code}"
+            f"Анализируй код файла {filename} на проблемы безопасности, стиля, производительности и ошибок.\n"
+            f"Если проблем нет, выведи 'Проблем не обнаружено'.\n"
+            f"Если проблемы есть, выведи их в формате:\n"
+            f"[строчка: проблемная строка]\n"
+            f"[исправление: исправленная строка]\n\n"
+            f"Код:\n{code}\n\n"
+            f"Анализ:"
         )
         
         try:
             result = self.generator(
-                prompt,  # Передаем строку, а не список
-                max_new_tokens=500,
-                temperature=0.01,
-                top_p=0.95,
+                prompt,
+                max_new_tokens=400,
+                temperature=0.1,
+                top_p=0.9,
                 do_sample=True,
                 num_return_sequences=1,
                 eos_token_id=self.tokenizer.eos_token_id,
@@ -150,55 +143,60 @@ class CodeAnalyzer:
             )
             
             response = result[0]['generated_text'].strip()
-            # Удаляем промпт из ответа
-            return response.replace(prompt, "", 1).strip()
+            # Извлекаем только текст после "Анализ:"
+            if "Анализ:" in response:
+                response = response.split("Анализ:", 1)[-1].strip()
+            
+            return response
             
         except Exception as e:
             self.logger.error(f"Generation failed: {str(e)}")
             return f"⚠️ Ошибка генерации: {str(e)}"
 
     def _postprocess_analysis(self, analysis, filename):
-        """Постобработка анализа для приведения к единому формату"""
-        # Шаблон для извлечения полных блоков
-        block_pattern = r"\[([^\]]+)\]\s*\(([^)]+)\)\s*\[строчка:\s*([^\n]+)\]\s*\[исправление:\s*([^\n]+)\]"
-        blocks = re.findall(block_pattern, analysis)
+        """Улучшенная постобработка анализа"""
+        # Логируем сырой вывод для отладки
+        self.logger.debug(f"Raw analysis for {filename}:\n{analysis}")
         
-        if blocks:
+        # Шаблон для извлечения проблем
+        problem_pattern = r"\[строчка:\s*(.+?)\]\s*\[исправление:\s*(.+?)\]"
+        problems = re.findall(problem_pattern, analysis, re.DOTALL)
+        
+        if problems:
             formatted = []
-            for block in blocks:
-                # Очистка компонентов
-                file_part = block[0].strip() or filename
-                problem_type = block[1].strip()
-                problem_line = block[2].strip()
-                fix_line = block[3].strip()
+            for problem in problems:
+                problem_line = problem[0].strip()
+                fix_line = problem[1].strip()
                 
-                # Форматирование блока
+                # Очистка от лишних символов
+                problem_line = re.sub(r'\s+', ' ', problem_line)
+                fix_line = re.sub(r'\s+', ' ', fix_line)
+                
+                # Ограничение длины строк
+                problem_line = problem_line[:200]
+                fix_line = fix_line[:200]
+                
                 formatted.append(
-                    f"[{file_part}]\n"
-                    f"({problem_type})\n"
                     f"[строчка: {problem_line}]\n"
                     f"[исправление: {fix_line}]"
                 )
-            return "\n\n".join(formatted)
+            
+            return f"[{filename}]\n" + "\n\n".join(formatted)
         
         # Проверка на отсутствие проблем
-        if "Проблем не обнаружено" in analysis:
-            return "Проблем не обнаружено"
+        if re.search(r"Проблем\s+не\s+обнаружено", analysis, re.IGNORECASE):
+            return f"[{filename}]\nПроблем не обнаружено"
         
-        # Удаление технических инструкций
-        clean_analysis = re.sub(
-            r"(Ты - анализатор кода|Найди проблемы|Пример:|Формат вывода:|ЖЕСТКИЕ ПРАВИЛА:).*", 
-            "", 
-            analysis,
-            flags=re.DOTALL
-        ).strip()
+        # Проверка на сообщения об ошибках
+        if "Ошибка" in analysis or "⚠️" in analysis:
+            return f"[{filename}]\n{analysis}"
         
-        if clean_analysis:
-            return clean_analysis
+        # Если вывод не пустой, но не соответствует формату
+        if analysis.strip():
+            return f"[{filename}]\n{analysis.strip()}"
         
-        return f"⚠️ Не удалось извлечь результаты анализа"
+        return f"[{filename}]\n⚠️ Не удалось извлечь результаты анализа"
 
-        
 
     def generate_report(self, file_paths: list) -> str:
         """Генерация финального отчета"""
