@@ -31,20 +31,12 @@ def analyze_repo(repo_path, analyzer):
             # Пропускаем системные и нерелевантные файлы
             if any(pattern in file_path for pattern in ['/.git/', '/__pycache__/']) or \
                file.startswith('.') or \
-               file.endswith(('.pyc', '.md', '.txt', '.ini', '.gitignore', '.json', '.yaml', '.yml')):
+               file.endswith(('.pyc', '.md', '.txt', '.ini', '.gitignore')):
                 continue
                 
             if analyzer._should_skip(file_path):
                 continue
                 
             valid_files.append(file_path)
-    
-    logger.info(f"Найдено файлов для анализа: {len(valid_files)}")
-    
-    # Ограничиваем количество файлов для анализа
-    MAX_FILES = 20
-    if len(valid_files) > MAX_FILES:
-        logger.warning(f"Слишком много файлов ({len(valid_files)}), анализируем первые {MAX_FILES}")
-        valid_files = valid_files[:MAX_FILES]
     
     return analyzer.generate_report(valid_files)

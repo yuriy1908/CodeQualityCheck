@@ -64,15 +64,18 @@ class CodeAnalyzer:
             if self._should_skip(file_path):
                 return "ℹ️ File skipped (binary/system)"
                 
-            code = self._read_file_content(file_path)  # Восстановленный метод
+            code = self._read_file_content(file_path)
             if not code:
                 return "⚠️ Failed to read file"
                 
-            return self._fast_generate_analysis(file_path, code)
+            analysis = self.fast_generate_analysis(file_path, code)
+            filename = os.path.basename(file_path)
+            return self._postprocess_analysis(analysis, filename)
             
         except Exception as e:
             self.logger.error(f"Analysis failed: {str(e)}")
             return f"⚠️ Analysis error: {str(e)}"
+
 
     def _should_skip(self, file_path):
         # Расширенный список пропускаемых расширений
@@ -80,7 +83,8 @@ class CodeAnalyzer:
             '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.zip', '.rar',
             '.exe', '.dll', '.so', '.bin', '.pdf', '.ttf', '.woff', '.woff2',
             '.eot', '.otf', '.mp3', '.wav', '.mp4', '.avi', '.mov', '.doc',
-            '.docx', '.xls', '.xlsx', '.pyc', '.gitignore', '.md', '.ini', '.txt'
+            '.docx', '.xls', '.xlsx', '.pyc', '.gitignore', '.md', '.ini', '.txt',
+            '.json', '.yaml', '.yml', '.log', '.lock', '.toml', '.cfg', '.conf'
         }
         
         # Пропускаем .git файлы и бинарные файлы
@@ -93,7 +97,6 @@ class CodeAnalyzer:
             
         return False
 
-    # ВОССТАНОВЛЕННЫЙ МЕТОД
     def _read_file_content(self, file_path):
         try:
             with open(file_path, 'rb') as f:
@@ -104,7 +107,7 @@ class CodeAnalyzer:
             self.logger.error(f"Error reading file {file_path}: {str(e)}")
             return None
 
-    def _fast_generate_analysis(self, file_path, code):
+    def fast_generate_analysis(self, file_path, code):
         """Быстрая генерация анализа с использованием конвейера"""
         max_tokens = 3000
         encoded = self.tokenizer.encode(code)
@@ -114,46 +117,88 @@ class CodeAnalyzer:
                 skip_special_tokens=True
             ) + "\n\n... [код усечен из-за длины]"
         
-        # Улучшенный промпт с жёстким форматом
-        prompt = f"""Проанализируй код из файла {os.path.basename(file_path)} и предоставь отчёт СТРОГО в формате:
-
-[название файла]
-(тип проблемы)
-[строчка: точная строка кода с проблемой]
-[исправление: исправленная строка кода]
-
-Если проблем несколько, перечисли их последовательно. Если проблем нет, напиши "Проблем не обнаружено".
-
-Пример:
-[config.py]
-(проблема безопасности)
-[строчка: SECRET_KEY = 'password123']
-[исправление: SECRET_KEY = os.environ.get('SECRET_KEY')]
-
-Код для анализа:
-{code}"""
-
+        # Пример правильного вывода (few-shot learning)
+        example = (
+            "[example.py]\n"
+            "(безопасность)\n"
+            "[строчка: password = '12345']\n"
+            "[исправление: password = getpass.getpass()]\n\n"
+        )
+        
+        # Формируем текстовый промпт
+        prompt = (
+            "Ты - анализатор кода. Найди проблемы и выведи ТОЛЬКО в формате:\n"
+            "1. [название файла]\n"
+            "2. (тип проблемы)\n"
+            "3. [строчка: проблемная строка]\n"
+            "4. [исправление: исправленная строка]\n"
+            "Пример:\n" + example +
+            "Если проблем нет - ТОЛЬКО 'Проблем не обнаружено'\n\n"
+            f"Файл: {os.path.basename(file_path)}\nКод:\n{code}"
+        )
+        
         try:
             result = self.generator(
-                prompt,
-                max_new_tokens=600,  # Увеличено для сложных файлов
-                temperature=1,     # Понижена "креативность"
-                top_p=0.85,
+                prompt,  # Передаем строку, а не список
+                max_new_tokens=500,
+                temperature=0.01,
+                top_p=0.95,
                 do_sample=True,
                 num_return_sequences=1,
-                pad_token_id=self.tokenizer.eos_token_id
+                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=self.tokenizer.eos_token_id,
             )
             
-            response = result[0]['generated_text']
-            response = response.replace(prompt, "", 1).strip()
-            
-            # Удаление всех технических комментариев
-            response = re.sub(r"### (Ответ|Response|Ask|Question):.*", "", response, flags=re.IGNORECASE)
-            return response
+            response = result[0]['generated_text'].strip()
+            # Удаляем промпт из ответа
+            return response.replace(prompt, "", 1).strip()
             
         except Exception as e:
             self.logger.error(f"Generation failed: {str(e)}")
             return f"⚠️ Ошибка генерации: {str(e)}"
+
+    def _postprocess_analysis(self, analysis, filename):
+        """Постобработка анализа для приведения к единому формату"""
+        # Шаблон для извлечения полных блоков
+        block_pattern = r"\[([^\]]+)\]\s*\(([^)]+)\)\s*\[строчка:\s*([^\n]+)\]\s*\[исправление:\s*([^\n]+)\]"
+        blocks = re.findall(block_pattern, analysis)
+        
+        if blocks:
+            formatted = []
+            for block in blocks:
+                # Очистка компонентов
+                file_part = block[0].strip() or filename
+                problem_type = block[1].strip()
+                problem_line = block[2].strip()
+                fix_line = block[3].strip()
+                
+                # Форматирование блока
+                formatted.append(
+                    f"[{file_part}]\n"
+                    f"({problem_type})\n"
+                    f"[строчка: {problem_line}]\n"
+                    f"[исправление: {fix_line}]"
+                )
+            return "\n\n".join(formatted)
+        
+        # Проверка на отсутствие проблем
+        if "Проблем не обнаружено" in analysis:
+            return "Проблем не обнаружено"
+        
+        # Удаление технических инструкций
+        clean_analysis = re.sub(
+            r"(Ты - анализатор кода|Найди проблемы|Пример:|Формат вывода:|ЖЕСТКИЕ ПРАВИЛА:).*", 
+            "", 
+            analysis,
+            flags=re.DOTALL
+        ).strip()
+        
+        if clean_analysis:
+            return clean_analysis
+        
+        return f"⚠️ Не удалось извлечь результаты анализа"
+
+        
 
     def generate_report(self, file_paths: list) -> str:
         """Генерация финального отчета"""
